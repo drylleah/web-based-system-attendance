@@ -177,7 +177,7 @@ function renderTable(records) {
     tr.title = 'Click to edit this record';
     tr.innerHTML = `
       <td class="row-check"><input type="checkbox" class="row-cb" data-id="${rec.id}"></td>
-      <td><span class="id-link">${rec.id_number || '—'}</span></td>
+      <td>${rec.id_number || '—'}</td>
       <td>${rec.last_name || '—'}</td>
       <td>${rec.first_name || '—'}</td>
       <td>${rec.middle_initial || '—'}</td>

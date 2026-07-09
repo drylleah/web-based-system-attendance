@@ -458,6 +458,7 @@ tbody tr:hover { background: #f0f9f5; }
 tbody td {
   padding: 11px 14px;
   color: var(--text-dark);
+  font-weight: 400;
   vertical-align: top;
 }
 tbody td.center { text-align: center; }
@@ -468,8 +469,8 @@ tbody td.center { text-align: center; }
   font-weight: 600;
 }
 .id-link {
-  color: var(--green-main);
-  font-weight: 600;
+  color: var(--text-dark);
+  font-weight: 400;
   cursor: pointer;
   text-decoration: none;
 }

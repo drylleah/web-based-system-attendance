@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 a:3:{s:6:"_token";s:40:"7v7FhcWyuCuA2q3bOsgBQjxOx1W82g0fnva3t0QO";s:9:"_previous";a:1:{s:3:"url";s:36:"http://localhost:8080/api/rfid/cards";}s:6:"_flash";a:2:{s:3:"old";a:0:{}s:3:"new";a:0:{}}}
+=======
+a:3:{s:6:"_token";s:40:"WzfQZ2kzVnwQQi7mwaWHnJFYai2omcZRx8HS4i2Z";s:9:"_previous";a:1:{s:3:"url";s:41:"http://localhost:8000/attendance?id=23023";}s:6:"_flash";a:2:{s:3:"old";a:0:{}s:3:"new";a:0:{}}}
+>>>>>>> 6079579 (madi met toy font ken text na sows ngem working ayos lang no bigdeal)

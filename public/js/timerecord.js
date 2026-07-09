@@ -124,13 +124,13 @@ function renderTable(records, total) {
     tr.dataset.record = JSON.stringify(rec);
     tr.innerHTML = `
       <td class="row-check"><input type="checkbox" class="row-cb" data-id="${rec.id}"></td>
-      <td class="td-id">${rec.id_number || '—'}</td>
+      <td>${rec.id_number || '—'}</td>
       <td class="col-last">${rec.last_name  || '—'}</td>
       <td class="col-first">${rec.first_name || '—'}</td>
       <td class="col-mi">${rec.middle_initial || '—'}</td>
       <td class="col-fullname">${fullName || '—'}</td>
       <td>${tiTime
-        ? `<div class="time-in-block"><div class="t">${tiTime}</div><div class="ap">${tiAmPm}</div></div>`
+        ? `<div class="time-out-block"><div class="t">${tiTime}</div><div class="ap">${tiAmPm}</div></div>`
         : '<span class="time-empty">--:--</span>'}</td>
       <td>${toTime
         ? `<div class="time-out-block"><div class="t">${toTime}</div><div class="ap">${toAmPm}</div></div>`
