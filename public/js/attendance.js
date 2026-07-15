@@ -506,3 +506,342 @@ mlSubmitBtn.addEventListener('click', async () => {
     if (e.key === 'Enter') mlSubmitBtn.click();
   });
 });
+
+
+// ================================================================
+//  QR SCANNER  (optimised for 720p built-in laptop webcam)
+//
+//  Detection strategy
+//  ──────────────────
+//  Rather than acting on the first decoded frame (which can be a
+//  partial or blurry read), we require the SAME token to appear in
+//  TWO CONSECUTIVE ticks before committing.  On the second match we
+//  freeze the canvas, do one final clean decode from the frozen
+//  frame, then hand the token to the API.
+//
+//  This avoids false triggers from motion blur and gives jsQR a
+//  stable image to work with on standard 720p webcams.
+//
+//  State machine
+//  ─────────────
+//  SCANNING  →  tick sees token  →  CONFIRMING (store candidate)
+//  CONFIRMING → same token again → freeze frame → PROCESSING
+//  PROCESSING → API returns      → success: close modal
+//                                → failure: SCANNING (after 3 s)
+// ================================================================
+
+// ---- Element refs ----
+const qrsOverlay     = document.getElementById('qrScannerOverlay');
+const openQrsBtn     = document.getElementById('openQrScanner');
+const closeQrsBtn    = document.getElementById('closeQrScanner');
+const qrsVideo       = document.getElementById('qrsVideo');
+const qrsCanvas      = document.getElementById('qrsCanvas');
+const qrsSweep       = document.getElementById('qrsSweep');
+const qrsCamError    = document.getElementById('qrsCamError');
+const qrsCamErrorMsg = document.getElementById('qrsCamErrorMsg');
+const qrsStatusDot   = document.getElementById('qrsStatusDot');
+const qrsStatusText  = document.getElementById('qrsStatusText');
+
+const qrsInstructions = document.getElementById('qrsInstructions');
+const qrsLooking      = document.getElementById('qrsLooking');
+const qrsFound        = document.getElementById('qrsFound');
+const qrsNotFound     = document.getElementById('qrsNotFound');
+const qrsNotFoundMsg  = document.getElementById('qrsNotFoundMsg');
+
+document.getElementById('qrsScanAgain').addEventListener('click',    resumeScanning);
+document.getElementById('qrsScanAgainErr').addEventListener('click', resumeScanning);
+
+// ---- Constants ----
+const QRS_INTERVAL_MS  = 80;    // ~12 fps tick — fast enough, light on CPU
+const QRS_ROI_SIZE     = 640;   // px — canvas size passed to jsQR
+const QRS_CONFIRM_NEEDED = 1;   // single confirmed read is enough — reduces latency on 720p webcams
+
+// ---- State ----
+let qrsStream         = null;
+let qrsTimerId        = null;
+let qrsScanning       = false;   // tick loop active
+let qrsProcessing     = false;   // API call in flight — hard block on new scans
+let qrsLastToken      = null;    // last successfully processed token
+let qrsCandidateToken = null;    // token seen in current tick
+let qrsConfirmCount   = 0;       // how many consecutive ticks matched candidate
+
+// ----------------------------------------------------------------
+//  HELPERS
+// ----------------------------------------------------------------
+function setQrsStatus(state, text) {
+  qrsStatusDot.className    = `qrs-status-dot qrs-status-dot--${state}`;
+  qrsStatusText.textContent = text;
+}
+
+function showQrsPanel(name) {
+  qrsInstructions.style.display = name === 'instructions' ? '' : 'none';
+  qrsLooking.style.display      = name === 'looking'      ? '' : 'none';
+  qrsFound.style.display        = name === 'found'        ? '' : 'none';
+  qrsNotFound.style.display     = name === 'notfound'     ? '' : 'none';
+}
+
+// ----------------------------------------------------------------
+//  OPEN MODAL
+// ----------------------------------------------------------------
+openQrsBtn.addEventListener('click', openQrScanner);
+
+async function openQrScanner() {
+  showQrsPanel('instructions');
+  setQrsStatus('idle', 'Starting camera…');
+  qrsCamError.style.display         = 'none';
+  qrsSweep.style.animationPlayState = 'running';
+  qrsLastToken      = null;
+  qrsCandidateToken = null;
+  qrsConfirmCount   = 0;
+  qrsProcessing     = false;
+  qrsOverlay.classList.add('show');
+
+  try {
+    qrsStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width:     { min: 640, ideal: 1280 },
+        height:    { min: 480, ideal: 720  },
+        frameRate: { ideal: 30 },
+      },
+      audio: false,
+    });
+
+    qrsVideo.srcObject = qrsStream;
+    qrsVideo.addEventListener('canplay', startScanLoop, { once: true });
+
+  } catch (err) {
+    const msg =
+      err.name === 'NotAllowedError'      ? 'Camera permission denied. Allow access in browser settings.' :
+      err.name === 'NotFoundError'        ? 'No camera found on this device.' :
+      err.name === 'NotReadableError'     ? 'Camera is in use by another application.' :
+      err.name === 'SecurityError'        ? 'Camera blocked: page must be served over HTTPS.' :
+      err.name === 'OverconstrainedError' ? 'Camera does not support the requested settings.' :
+                                            `${err.name}: ${err.message}`;
+    qrsCamError.style.display         = 'flex';
+    qrsCamErrorMsg.textContent        = msg;
+    setQrsStatus('error', 'Camera unavailable');
+    qrsSweep.style.animationPlayState = 'paused';
+    console.error('[QR] getUserMedia failed:', err.name, err.message);
+  }
+}
+
+// ----------------------------------------------------------------
+//  CLOSE MODAL
+// ----------------------------------------------------------------
+closeQrsBtn.addEventListener('click', closeQrScanner);
+qrsOverlay.addEventListener('click', (e) => {
+  if (e.target === qrsOverlay) closeQrScanner();
+});
+
+function closeQrScanner() {
+  stopScanLoop();
+  stopCamera();
+  qrsOverlay.classList.remove('show');
+  showQrsPanel('instructions');
+  setQrsStatus('idle', 'Starting camera…');
+  qrsLastToken      = null;
+  qrsCandidateToken = null;
+  qrsConfirmCount   = 0;
+  qrsProcessing     = false;
+}
+
+function stopCamera() {
+  if (qrsStream) {
+    qrsStream.getTracks().forEach(t => t.stop());
+    qrsStream = null;
+  }
+  qrsVideo.srcObject = null;
+}
+
+// ----------------------------------------------------------------
+//  SCAN LOOP
+// ----------------------------------------------------------------
+function startScanLoop() {
+  qrsScanning = true;
+  setQrsStatus('scanning', 'Scanning…');
+  scheduleTick();
+}
+
+function stopScanLoop() {
+  qrsScanning = false;
+  if (qrsTimerId !== null) {
+    clearTimeout(qrsTimerId);
+    qrsTimerId = null;
+  }
+}
+
+function scheduleTick() {
+  if (!qrsScanning) return;
+  qrsTimerId = setTimeout(tick, QRS_INTERVAL_MS);
+}
+
+function tick() {
+  if (!qrsScanning || qrsProcessing) {
+    scheduleTick();
+    return;
+  }
+
+  if (qrsVideo.readyState < qrsVideo.HAVE_ENOUGH_DATA || qrsVideo.videoWidth === 0) {
+    scheduleTick();
+    return;
+  }
+
+  // ---- Draw FULL frame scaled to 640×360 ----
+  // Scanning the full frame (not just center crop) means the QR code
+  // is detected regardless of where it appears in the viewfinder.
+  // 640×360 is fast for jsQR while retaining enough detail for a UUID QR.
+  const vw  = qrsVideo.videoWidth;
+  const vh  = qrsVideo.videoHeight;
+  const ctx = qrsCanvas.getContext('2d', { willReadFrequently: true });
+  qrsCanvas.width  = 640;
+  qrsCanvas.height = Math.round(640 * vh / vw);
+  ctx.drawImage(qrsVideo, 0, 0, qrsCanvas.width, qrsCanvas.height);
+
+  // ---- Attempt decode ----
+  const imageData = ctx.getImageData(0, 0, qrsCanvas.width, qrsCanvas.height);
+  const result    = jsQR(imageData.data, qrsCanvas.width, qrsCanvas.height, {
+    inversionAttempts: 'attemptBoth',
+  });
+
+  if (result && result.data) {
+    const token = result.data.trim();
+    console.log('[QR] jsQR decoded:', token.substring(0, 20) + '…');
+
+    if (!token) { resetCandidate(); scheduleTick(); return; }
+
+    // Skip if this token was already successfully processed
+    if (token === qrsLastToken) { scheduleTick(); return; }
+
+    if (token === qrsCandidateToken) {
+      // Same token again — increment confirmation counter
+      qrsConfirmCount++;
+    } else {
+      // New token seen — start fresh confirmation
+      qrsCandidateToken = token;
+      qrsConfirmCount   = 1;
+    }
+
+    if (qrsConfirmCount >= QRS_CONFIRM_NEEDED) {
+      // ---- CONFIRMED — freeze the frame and commit ----
+      // The canvas already holds the most recent clean frame of this
+      // token. Stop the loop immediately to prevent any further decodes
+      // while the API call is in flight.
+      stopScanLoop();
+      commitToken(token);
+      return;
+    }
+
+    // Not yet confirmed — update status and keep scanning
+    setQrsStatus('scanning', 'Hold steady…');
+
+  } else {
+    // No QR in this frame — reset candidate streak
+    resetCandidate();
+    const dots = ['.', '..', '...'];
+    qrsStatusText.textContent = 'Scanning' + dots[Math.floor(Date.now() / 400) % 3];
+  }
+
+  scheduleTick();
+}
+
+function resetCandidate() {
+  qrsCandidateToken = null;
+  qrsConfirmCount   = 0;
+}
+
+// ----------------------------------------------------------------
+//  COMMIT TOKEN
+//  Called once a token has been confirmed across consecutive ticks.
+//  The canvas holds a frozen clean frame — we do one final decode
+//  from it to get the authoritative token string, then call the API.
+// ----------------------------------------------------------------
+function commitToken(confirmedToken) {
+  // Final authoritative decode from the frozen canvas frame
+  const ctx       = qrsCanvas.getContext('2d', { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, qrsCanvas.width, qrsCanvas.height);
+  const final     = jsQR(imageData.data, qrsCanvas.width, qrsCanvas.height, {
+    inversionAttempts: 'attemptBoth',
+  });
+
+  // Use the final decode result if available, fall back to confirmed token
+  const token = (final && final.data) ? final.data.trim() : confirmedToken;
+
+  console.log('[QR] Committed token:', token);
+
+  qrsProcessing = true;
+  qrsSweep.style.animationPlayState = 'paused';
+  setQrsStatus('scanning', 'Processing…');
+  showQrsPanel('looking');
+
+  processAttendance(token);
+}
+
+// ----------------------------------------------------------------
+//  PROCESS ATTENDANCE — POST /api/qr/scan
+// ----------------------------------------------------------------
+async function processAttendance(token) {
+  try {
+    const res  = await fetch('/api/qr/scan', {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+      },
+      body: JSON.stringify({ qr_token: token }),
+    });
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      // ---- SUCCESS ----
+      qrsLastToken = token;   // prevent re-scan of same token
+      closeQrScanner();
+      showSuccessPanel(data);
+      // Scanning resumes automatically next time the modal is opened
+
+    } else {
+      // ---- UNREGISTERED OR SERVER ERROR ----
+      const msg = data.error ||
+        (res.status === 404
+          ? 'This QR code is not registered for attendance.'
+          : 'An error occurred. Please try again.');
+      setQrsStatus('error', res.status === 404 ? 'QR not recognised' : 'Scan failed');
+      qrsNotFoundMsg.textContent = msg;
+      showQrsPanel('notfound');
+      scheduleAutoResume();
+    }
+
+  } catch {
+    setQrsStatus('error', 'Network error');
+    qrsNotFoundMsg.textContent = 'Could not reach the server. Check your connection.';
+    showQrsPanel('notfound');
+    scheduleAutoResume();
+
+  } finally {
+    qrsProcessing = false;
+  }
+}
+
+// ----------------------------------------------------------------
+//  AUTO-RESUME — 3 s cooldown after a failed lookup
+// ----------------------------------------------------------------
+function scheduleAutoResume() {
+  setTimeout(() => {
+    resumeScanning();
+  }, 3000);
+}
+
+// ----------------------------------------------------------------
+//  RESUME SCANNING
+// ----------------------------------------------------------------
+function resumeScanning() {
+  qrsCandidateToken = null;
+  qrsConfirmCount   = 0;
+  qrsProcessing     = false;
+
+  showQrsPanel('instructions');
+  setQrsStatus('scanning', 'Scanning…');
+  qrsSweep.style.animationPlayState = 'running';
+
+  qrsScanning = true;
+  scheduleTick();
+}

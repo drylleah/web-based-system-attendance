@@ -22,6 +22,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
         Manual Log
       </button>
+      <button class="topbar-qr-btn" id="openQrScanner" title="QR Scanner">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 3.75 9.375v-4.5ZM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 0 1-1.125-1.125v-4.5ZM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 13.5 9.375v-4.5Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75ZM6.75 17.25h.75v.75h-.75v-.75ZM17.25 6.75h.75v.75h-.75v-.75ZM13.5 13.5h.75v.75H13.5V13.5ZM18 13.5h.75v.75H18V13.5ZM15.75 15.75h.75v.75h-.75v-.75ZM18 16.5h.75v.75H18v-.75Z" /></svg>
+        QR Scanner
+      </button>
       <button class="topbar-manage-btn" id="openCardManager" title="Manage IDs">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" /></svg>
         Manage IDs
@@ -253,6 +257,116 @@
     </div>
   </div>
 
+  <!-- ===== QR SCANNER MODAL ===== -->
+  <div class="qrs-overlay" id="qrScannerOverlay">
+    <div class="qrs-modal">
+
+      <!-- Header -->
+      <div class="qrs-header">
+        <div class="qrs-header-left">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 3.75 9.375v-4.5ZM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 0 1-1.125-1.125v-4.5ZM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 13.5 9.375v-4.5Z" /></svg>
+          <span>QR Attendance Scanner</span>
+        </div>
+        <button class="qrs-close" id="closeQrScanner" aria-label="Close">&times;</button>
+      </div>
+
+      <!-- Body -->
+      <div class="qrs-body">
+
+        <!-- Left: camera feed -->
+        <div class="qrs-camera-col">
+          <!-- Viewfinder wrapper — video + scanning overlay sit here -->
+          <div class="qrs-viewfinder" id="qrsViewfinder">
+            <video class="qrs-video" id="qrsVideo" playsinline muted autoplay></video>
+            <!-- Hidden canvas used by jsQR to read pixel data -->
+            <canvas class="qrs-canvas" id="qrsCanvas"></canvas>
+            <!-- Scanning guide box — centered square matching the JS ROI crop -->
+            <div class="qrs-guide">
+              <span class="qrs-corner qrs-corner--tl"></span>
+              <span class="qrs-corner qrs-corner--tr"></span>
+              <span class="qrs-corner qrs-corner--bl"></span>
+              <span class="qrs-corner qrs-corner--br"></span>
+              <span class="qrs-sweep" id="qrsSweep"></span>
+            </div>
+            <!-- Camera error overlay -->
+            <div class="qrs-cam-error" id="qrsCamError" style="display:none;">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+              <p id="qrsCamErrorMsg">Camera unavailable.</p>
+            </div>
+          </div>
+
+          <!-- Status pill below viewfinder -->
+          <div class="qrs-status" id="qrsStatus">
+            <span class="qrs-status-dot" id="qrsStatusDot"></span>
+            <span class="qrs-status-text" id="qrsStatusText">Starting camera…</span>
+          </div>
+        </div>
+
+        <!-- Right: result / instructions -->
+        <div class="qrs-result-col">
+
+          <!-- Idle / instructions state -->
+          <div class="qrs-instructions" id="qrsInstructions">
+            <div class="qrs-instr-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.4" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3.75H6.912a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H15M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859M12 3v8.25m0 0-3-3m3 3 3-3" /></svg>
+            </div>
+            <h3>Point Camera at QR Code</h3>
+            <p>Hold the student's QR code steady in front of the camera. Detection is automatic.</p>
+            <ul class="qrs-tips">
+              <li>Ensure good lighting</li>
+              <li>Keep QR code flat and unobstructed</li>
+              <li>Distance: 15 – 40 cm from camera</li>
+            </ul>
+          </div>
+
+          <!-- Scanning / looking up state -->
+          <div class="qrs-looking" id="qrsLooking" style="display:none;">
+            <div class="qrs-spinner"></div>
+            <p class="qrs-looking-text">Verifying QR code…</p>
+          </div>
+
+          <!-- Found / success state -->
+          <div class="qrs-found" id="qrsFound" style="display:none;">
+            <div class="qrs-found-badge">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+            </div>
+            <div class="qrs-found-label">User Identified</div>
+            <div class="qrs-found-avatar" id="qrsAvatar">?</div>
+            <div class="qrs-found-name"  id="qrsFoundName">—</div>
+            <div class="qrs-found-id"    id="qrsFoundId">—</div>
+            <div class="qrs-found-meta"  id="qrsFoundMeta">—</div>
+            <button class="qrs-btn-scan-again" id="qrsScanAgain">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              Scan Next
+            </button>
+          </div>
+
+          <!-- Not found / error state -->
+          <div class="qrs-notfound" id="qrsNotFound" style="display:none;">
+            <div class="qrs-notfound-badge">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+            </div>
+            <div class="qrs-notfound-label">QR Not Recognised</div>
+            <p class="qrs-notfound-msg" id="qrsNotFoundMsg">This QR code is not registered in the system.</p>
+            <button class="qrs-btn-scan-again qrs-btn-scan-again--err" id="qrsScanAgainErr">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              Try Again
+            </button>
+          </div>
+
+        </div>
+        <!-- /qrs-result-col -->
+      </div>
+      <!-- /qrs-body -->
+
+    </div>
+  </div>
+  <!-- /QR SCANNER MODAL -->
+
+  <!-- jsQR — self-hosted to avoid CDN/SRI failures -->
+  <script src="{{ asset('js/jsqr.js') }}"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+          crossorigin="anonymous"></script>
   <script src="{{ asset('js/attendance.js') }}"></script>
 </body>
 </html>

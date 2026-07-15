@@ -3,6 +3,7 @@
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\IncidentController;
+use App\Http\Controllers\QrController;
 use App\Http\Controllers\RfidController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\TimeRecordController;
@@ -113,6 +114,29 @@ Route::prefix('incidents')->middleware('auth.session')->group(function () {
     Route::get('/{id}',    [IncidentController::class, 'show'])->where('id', '[0-9]+');    // fetch one report
     Route::put('/{id}',    [IncidentController::class, 'update'])->where('id', '[0-9]+'); // update status / remarks
     Route::delete('/{id}', [IncidentController::class, 'destroy'])->where('id', '[0-9]+'); // delete permanently
+});
+
+// ==========================================================================
+// QR REGISTRATION  —  /api/qr/*
+//
+// register and token lookup are PUBLIC so students can self-register at a
+// kiosk screen without an admin being present.
+// Card management (list / regenerate / delete) requires an admin session.
+// ==========================================================================
+Route::prefix('qr')->group(function () {
+
+    // Public — self-registration, token re-download, and QR attendance scan
+    Route::post('scan',              [QrController::class, 'scan']);              // process a QR tap → write attendance
+    Route::post('register',          [QrController::class, 'register']);          // register + issue QR token
+    Route::get('token/{schoolId}',   [QrController::class, 'getToken']);          // fetch token for re-download
+    Route::get('lookup/{token}',     [QrController::class, 'lookup']);            // validate QR token → return user info
+
+    // Protected — admin card management
+    Route::middleware('auth.session')->group(function () {
+        Route::get('cards',              [QrController::class, 'listCards']);     // list all QR-registered users
+        Route::post('regenerate',        [QrController::class, 'regenerate']);   // issue a new token
+        Route::delete('cards/{schoolId}',[QrController::class, 'deleteCard']);   // remove a registration
+    });
 });
 
 // ==========================================================================

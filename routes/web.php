@@ -44,3 +44,11 @@ Route::middleware('auth.session')->group(function () {
 Route::get('/attendance', function () {
     return view('attendance');
 })->name('attendance');
+
+// ---- QR Registration page (public — students/staff self-register) ----
+// Public like the RFID kiosk: no admin session required.
+// The JS on this page calls POST /api/qr/register and then renders the
+// QR image entirely in the browser using QRCode.js.
+Route::get('/qr-registration', function () {
+    return view('qr-registration');
+})->name('qr.register');
