@@ -419,6 +419,8 @@ body {
 .btn-refresh:hover{ background: var(--btn-refresh-hover); }
 .btn-save-tr { background: #0f766e; color: #fff; }
 .btn-save-tr:hover { background: #0d6460; }
+.btn-view-dtr { background: #1d4ed8; color: #fff; }
+.btn-view-dtr:hover { background: #1e40af; }
 
 /* Table */
 .table-wrapper {
@@ -470,11 +472,7 @@ tbody td.center { text-align: center; }
 }
 .id-link {
   color: var(--text-dark);
-<<<<<<< HEAD
   font-weight: 600;
-=======
-  font-weight: 400;
->>>>>>> 3fae71c59841a9131b926bfc1b65f6c544d48c1c
   cursor: pointer;
   text-decoration: none;
 }

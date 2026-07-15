@@ -355,14 +355,26 @@ class AttendanceController extends Controller
 
         // Live attendance records (not yet saved to Time Record)
         $liveRecords = Attendance::where('id_number', $idNumber)
-            ->whereMonth('date', $month)
-            ->whereYear('date',  $year)
+            ->where(function ($q) use ($month, $year) {
+                $q->where(function ($q2) use ($month, $year) {
+                    $q2->whereMonth('date', $month)->whereYear('date', $year);
+                })->orWhere(function ($q2) use ($month, $year) {
+                    $q2->whereNull('date')
+                       ->whereMonth('time_in', $month)->whereYear('time_in', $year);
+                });
+            })
             ->get($cols);
 
         // Archived time records (already saved to Time Record)
         $archivedRecords = \App\Models\TimeRecord::where('id_number', $idNumber)
-            ->whereMonth('date', $month)
-            ->whereYear('date',  $year)
+            ->where(function ($q) use ($month, $year) {
+                $q->where(function ($q2) use ($month, $year) {
+                    $q2->whereMonth('date', $month)->whereYear('date', $year);
+                })->orWhere(function ($q2) use ($month, $year) {
+                    $q2->whereNull('date')
+                       ->whereMonth('time_in', $month)->whereYear('time_in', $year);
+                });
+            })
             ->get($cols);
 
         // Merge both collections and sort by date ascending

@@ -312,6 +312,32 @@ document.getElementById('btnExport').addEventListener('click', () => {
   window.print();
 });
 
+// ---- VIEW DTR (toolbar) ----
+const dtrLookupOverlay = document.getElementById('dtrLookupOverlay');
+const dtrLookupId      = document.getElementById('dtrLookupId');
+
+document.getElementById('btnViewDtr').addEventListener('click', () => {
+  dtrLookupId.value = '';
+  dtrLookupOverlay.classList.add('show');
+  setTimeout(() => dtrLookupId.focus(), 80);
+});
+
+document.getElementById('dtrLookupCancel').addEventListener('click', () => {
+  dtrLookupOverlay.classList.remove('show');
+});
+dtrLookupOverlay.addEventListener('click', (e) => {
+  if (e.target === dtrLookupOverlay) dtrLookupOverlay.classList.remove('show');
+});
+
+function openDtrFromLookup() {
+  const id = dtrLookupId.value.trim();
+  if (!id) { showToast('Please enter an ID number.', 'error'); return; }
+  dtrLookupOverlay.classList.remove('show');
+  openDtrModal(id, id);
+}
+document.getElementById('dtrLookupOpen').addEventListener('click', openDtrFromLookup);
+dtrLookupId.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDtrFromLookup(); });
+
 // ---- New Entry Modal ----
 document.getElementById('btnNewEntry').addEventListener('click', () => {
   const now = new Date();

@@ -73,14 +73,23 @@ class TimeRecordController extends Controller
         if ($to)    $query->whereDate('date', '<=', $to);
 
         // Month filter — e.g. ?month=3 returns only March records
-        if ($month) $query->whereMonth('date', (int) $month);
+        // Falls back to time_in month for rows where date is NULL
+        if ($month) {
+            $query->where(function ($q) use ($month) {
+                $q->whereMonth('date', (int) $month)
+                  ->orWhere(function ($q2) use ($month) {
+                      $q2->whereNull('date')->whereMonth('time_in', (int) $month);
+                  });
+            });
+        }
 
         // Count total matching rows BEFORE applying the page offset
         // so the frontend can calculate total pages
         $total = $query->count();
 
-        // Apply ordering and pagination
-        $records = $query->orderByDesc('date')
+        // Apply ordering and pagination — use COALESCE so null date rows
+        // sort by their time_in date instead of floating to top/bottom
+        $records = $query->orderByRaw('COALESCE(date, DATE(time_in)) DESC')
                          ->orderByDesc('time_in')
                          ->offset(($page - 1) * $limit)
                          ->limit($limit)
@@ -235,6 +244,10 @@ class TimeRecordController extends Controller
     // Returns all time records for a specific person in a given month/year.
     // Used by the DTR (Daily Time Record) modal on the Time Records page.
     //
+    // Merges records from BOTH the live attendance table AND the permanent
+    // time_records archive so that newly-added dashboard records appear in
+    // the DTR even before the admin clicks "Save to Time Record".
+    //
     // Query parameters:
     //   id_number — the student/staff ID to look up (required)
     //   month     — integer 1–12 (required)
@@ -250,15 +263,44 @@ class TimeRecordController extends Controller
             return response()->json(['error' => 'id_number, month, and year are required.'], 400);
         }
 
-        $records = TimeRecord::where('id_number', $idNumber)
-            ->whereMonth('date', $month)
-            ->whereYear('date',  $year)
-            ->orderBy('date')
-            ->orderBy('time_in')
-            ->get(['id', 'date', 'time_in', 'time_out', 'remarks',
-                   'last_name', 'first_name', 'middle_initial']);
+        $cols = ['id', 'date', 'time_in', 'time_out', 'remarks',
+                 'last_name', 'first_name', 'middle_initial'];
 
-        // Build the person name from the first record
+        // Helper: build the month/year filter with a null-date fallback
+        $applyFilter = function ($query) use ($month, $year) {
+            $query->where(function ($q) use ($month, $year) {
+                $q->where(function ($q2) use ($month, $year) {
+                    $q2->whereMonth('date', $month)
+                       ->whereYear('date',  $year);
+                })->orWhere(function ($q2) use ($month, $year) {
+                    $q2->whereNull('date')
+                       ->whereMonth('time_in', $month)
+                       ->whereYear('time_in',  $year);
+                });
+            });
+            return $query;
+        };
+
+        // Archived records (already saved to time_records)
+        $archived = $applyFilter(
+            TimeRecord::where('id_number', $idNumber)
+        )->get($cols);
+
+        // Live records (still in the attendance table, not yet saved)
+        $live = $applyFilter(
+            \App\Models\Attendance::where('id_number', $idNumber)
+        )->get($cols);
+
+        // Merge and sort by date ascending, then time_in
+        $records = $archived->concat($live)
+            ->sortBy(function ($r) {
+                $date = $r->date ?? ($r->time_in ? \Illuminate\Support\Carbon::parse($r->time_in)->toDateString() : '9999-12-31');
+                $ti   = $r->time_in ?? '00:00:00';
+                return $date . ' ' . $ti;
+            })
+            ->values();
+
+        // Build the person name from the first record found
         $name = null;
         if ($records->isNotEmpty()) {
             $r    = $records->first();
@@ -333,12 +375,15 @@ class TimeRecordController extends Controller
 
         // Bulk INSERT using a raw SQL statement: SELECT all columns from
         // attendance and insert them directly into time_records.
-        // This is a single round-trip and avoids loading all rows into PHP.
+        // COALESCE ensures the date column is always filled — if it's NULL
+        // on the attendance row, we derive it from the time_in datetime.
         \Illuminate\Support\Facades\DB::statement('
             INSERT INTO time_records
                 (id_number, last_name, first_name, middle_initial, time_in, time_out, date, remarks, saved_at)
             SELECT
-                id_number, last_name, first_name, middle_initial, time_in, time_out, date, remarks, NOW()
+                id_number, last_name, first_name, middle_initial, time_in, time_out,
+                COALESCE(date, DATE(time_in)),
+                remarks, NOW()
             FROM attendance
         ');
 
