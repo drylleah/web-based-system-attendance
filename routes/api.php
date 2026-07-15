@@ -133,9 +133,10 @@ Route::prefix('qr')->group(function () {
 
     // Protected — admin card management
     Route::middleware('auth.session')->group(function () {
-        Route::get('cards',              [QrController::class, 'listCards']);     // list all QR-registered users
-        Route::post('regenerate',        [QrController::class, 'regenerate']);   // issue a new token
-        Route::delete('cards/{schoolId}',[QrController::class, 'deleteCard']);   // remove a registration
+        Route::get('cards',              [QrController::class, 'listCards']);
+        Route::put('cards/{schoolId}',   [QrController::class, 'updateCard']);
+        Route::post('regenerate',        [QrController::class, 'regenerate']);
+        Route::delete('cards/{schoolId}',[QrController::class, 'deleteCard']);
     });
 });
 

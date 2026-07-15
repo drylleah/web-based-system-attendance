@@ -4,19 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>QR Registration — Attendance System</title>
-  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <meta name="csrf-token" content="<?php echo e(csrf_token()); ?>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ asset('css/dashboard.css') }}">
-  <link rel="stylesheet" href="{{ asset('css/qr.css') }}">
+  <link rel="stylesheet" href="<?php echo e(asset('css/dashboard.css')); ?>">
+  <link rel="stylesheet" href="<?php echo e(asset('css/qr.css')); ?>">
 </head>
 <body>
 
   <!-- ========== SIDEBAR ========== -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <img src="{{ asset('images/lormaLogo.png') }}" alt="Lorma Colleges"
+      <img src="<?php echo e(asset('images/lormaLogo.png')); ?>" alt="Lorma Colleges"
            onerror="this.style.display='none'; document.getElementById('logoPlaceholder').style.display='block'">
       <div class="logo-placeholder" id="logoPlaceholder" style="display:none;">
         <div class="logo-name">LORMA</div>
@@ -25,26 +25,26 @@
     </div>
 
     <nav class="sidebar-nav">
-      <a class="nav-item" href="{{ route('dashboard') }}">
+      <a class="nav-item" href="<?php echo e(route('dashboard')); ?>">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
         </svg>
         Home
       </a>
-      <a class="nav-item" href="{{ route('timerecord') }}">
+      <a class="nav-item" href="<?php echo e(route('timerecord')); ?>">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
         </svg>
         Time Record
       </a>
-      <a class="nav-item" href="{{ route('settings') }}">
+      <a class="nav-item" href="<?php echo e(route('settings')); ?>">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
         </svg>
         Settings
       </a>
-      <a class="nav-item active" href="{{ route('qr.register') }}">
+      <a class="nav-item active" href="<?php echo e(route('qr.register')); ?>">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 3.75 9.375v-4.5ZM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 0 1-1.125-1.125v-4.5ZM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 13.5 9.375v-4.5Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75ZM6.75 17.25h.75v.75h-.75v-.75ZM17.25 6.75h.75v.75h-.75v-.75ZM13.5 13.5h.75v.75H13.5V13.5ZM18 13.5h.75v.75H18V13.5ZM15.75 15.75h.75v.75h-.75v-.75ZM18 16.5h.75v.75H18v-.75Z" />
@@ -80,7 +80,7 @@
           </svg>
         </button>
         <div class="topbar-avatar" id="topbarAvatar" title="Profile"
-             onclick="window.location.href='{{ route('settings') }}?tab=account'">A</div>
+             onclick="window.location.href='<?php echo e(route('settings')); ?>?tab=account'">A</div>
       </div>
     </header>
 
@@ -420,6 +420,7 @@
       });
     }
   </script>
-  <script src="{{ asset('js/qr.js') }}"></script>
+  <script src="<?php echo e(asset('js/qr.js')); ?>"></script>
 </body>
 </html>
+<?php /**PATH C:\Users\dhary\Documents\attendance-web-based-system\resources\views/qr-registration.blade.php ENDPATH**/ ?>

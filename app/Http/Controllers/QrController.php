@@ -351,6 +351,63 @@ class QrController extends Controller
     }
 
     // ---------------------------------------------------------------
+    // PUT /api/qr/cards/{schoolId}  — PROTECTED (auth.session)
+    //
+    // Updates name fields for an existing QR registration.
+    // Only fields explicitly sent in the request body are changed.
+    // school_id itself cannot be changed — it is the primary key.
+    // ---------------------------------------------------------------
+    public function updateCard(Request $request, string $schoolId): JsonResponse
+    {
+        $schoolId = $this->normalise($schoolId);
+
+        $reg = QrRegistration::where('school_id', $schoolId)->first();
+
+        if (! $reg) {
+            return response()->json(['error' => 'School ID not found.'], 404);
+        }
+
+        $updates = [];
+
+        if ($request->has('last_name')) {
+            $v = trim($request->input('last_name'));
+            if (! $v) return response()->json(['error' => 'Last name cannot be empty.'], 422);
+            $updates['last_name'] = $v;
+        }
+
+        if ($request->has('first_name')) {
+            $v = trim($request->input('first_name'));
+            if (! $v) return response()->json(['error' => 'First name cannot be empty.'], 422);
+            $updates['first_name'] = $v;
+        }
+
+        if ($request->has('middle_initial')) {
+            $v = trim($request->input('middle_initial'));
+            if ($v && ! preg_match('/^[A-Za-z]$/', $v)) {
+                return response()->json(['error' => 'Middle initial must be a single letter.'], 422);
+            }
+            $updates['middle_initial'] = $v ?: null;
+        }
+
+        if (empty($updates)) {
+            return response()->json(['error' => 'Nothing to update.'], 400);
+        }
+
+        $reg->update($updates);
+
+        ActivityLogger::log(
+            'qr_update',
+            "QR registration updated: {$reg->first_name} {$reg->last_name} ({$schoolId})"
+        );
+
+        return response()->json([
+            'success'   => true,
+            'message'   => 'Registration updated.',
+            'school_id' => $reg->school_id,
+        ]);
+    }
+
+    // ---------------------------------------------------------------
     // DELETE /api/qr/cards/{schoolId}  — PROTECTED (auth.session)
     //
     // Permanently removes a QR registration.
