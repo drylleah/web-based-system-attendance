@@ -95,20 +95,23 @@ class QrController extends Controller
         $idNumber = $reg->school_id;
         $todayStr = now()->toDateString();
 
-        // Check for an open (time_out = null) attendance record today
-        $openRecord = Attendance::where('id_number', $idNumber)
-                                ->whereDate('date', $todayStr)
-                                ->whereNull('time_out')
-                                ->orderByDesc('time_in')
-                                ->first();
+        // ---------------------------------------------------------------
+        // New attendance logic — mirrors RfidController::scan()
+        //
+        // First scan today  → Time In  (create new row)
+        // Any later scan    → Time Out (update time_out on the same row)
+        // ---------------------------------------------------------------
+        $existingRecord = Attendance::where('id_number', $idNumber)
+                                    ->whereDate('date', $todayStr)
+                                    ->orderBy('time_in')
+                                    ->first();
 
-        if ($openRecord) {
+        if ($existingRecord) {
             // ---- TIME OUT ----
-            $timeOutDatetime = now()->format('Y-m-d H:i:s');
-            $openRecord->update(['time_out' => $timeOutDatetime]);
+            $existingRecord->update(['time_out' => now()->format('Y-m-d H:i:s')]);
 
             $action       = 'time_out';
-            $attendanceId = $openRecord->id;
+            $attendanceId = $existingRecord->id;
         } else {
             // ---- TIME IN ----
             $newRecord = Attendance::create([

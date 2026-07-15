@@ -79,9 +79,10 @@ function resetToIdle() {
 }
 
 function startProgressBar(barEl, durationMs, cb) {
+  clearTimeout(resetTimer);
   barEl.style.transition = 'none';
   barEl.style.transform  = 'scaleX(1)';
-  void barEl.offsetWidth; // force reflow
+  void barEl.offsetWidth;
   barEl.style.transition = `transform ${durationMs}ms linear`;
   barEl.style.transform  = 'scaleX(0)';
   resetTimer = setTimeout(cb, durationMs);
@@ -113,24 +114,35 @@ async function doScan(rawId) {
 }
 
 // ------------------------------------------------------------------ success panel --
+
+// Per-ID scan counter — used only for alternating the displayed label.
+// Key: id_number string. Value: number of successful scans this session.
+// Resets on page reload. Does NOT affect attendance records.
+const scanCountMap = {};
+
 function showSuccessPanel(data) {
-  const isIn = data.action === 'time_in';
+  const id = data.id_number || '';
 
-  resultBadge.className      = `result-badge result-badge--${isIn ? 'in' : 'out'}`;
-  badgeIconIn.style.display  = isIn ? 'block' : 'none';
-  badgeIconOut.style.display = isIn ? 'none'  : 'block';
+  // Increment scan count for this ID and derive display label.
+  // Odd count (1, 3, 5…) → TIME IN   Even count (2, 4, 6…) → TIME OUT
+  scanCountMap[id] = (scanCountMap[id] || 0) + 1;
+  const displayIn  = (scanCountMap[id] % 2 === 1);
 
-  resultAction.textContent = isIn ? 'TIME IN' : 'TIME OUT';
-  resultAction.className   = `result-action result-action--${isIn ? 'in' : 'out'}`;
+  resultBadge.className      = `result-badge result-badge--${displayIn ? 'in' : 'out'}`;
+  badgeIconIn.style.display  = displayIn ? 'block' : 'none';
+  badgeIconOut.style.display = displayIn ? 'none'  : 'block';
+
+  resultAction.textContent = displayIn ? 'TIME IN' : 'TIME OUT';
+  resultAction.className   = `result-action result-action--${displayIn ? 'in' : 'out'}`;
 
   resultAvatar.textContent      = (data.first_name || '?').charAt(0).toUpperCase();
-  resultAvatar.style.background = isIn ? 'var(--green-main)' : 'var(--blue-main)';
+  resultAvatar.style.background = displayIn ? 'var(--green-main)' : 'var(--blue-main)';
 
   resultName.textContent = data.full_name || `${data.first_name} ${data.last_name}`;
   resultId.textContent   = `ID: ${data.id_number}`;
 
   resultTime.textContent = data.time;
-  resultTime.style.color = isIn ? 'var(--green-main)' : 'var(--blue-main)';
+  resultTime.style.color = displayIn ? 'var(--green-main)' : 'var(--blue-main)';
   resultDate.textContent = new Date(data.date + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
   });

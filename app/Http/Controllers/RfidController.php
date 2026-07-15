@@ -88,35 +88,48 @@ class RfidController extends Controller
         // Get today's date as a plain YYYY-MM-DD string for comparisons
         $todayStr = now()->toDateString();
 
-        // Check whether the student already tapped in today but has not yet
-        // tapped out — i.e. they have an open (time_out = null) attendance row.
-        // We pick the most recent one in case of data anomalies.
-        $openRecord = Attendance::where('id_number', $idNumber)
-                                ->whereDate('date', $todayStr)
-                                ->whereNull('time_out')
-                                ->orderByDesc('time_in')
-                                ->first();
+        // ---------------------------------------------------------------
+        // New attendance logic (single-reader / UHF behaviour)
+        //
+        // Rule: one attendance record per student per day.
+        //   • No record today at all  → this is the first scan → Time In
+        //     (create a new row, time_out remains NULL)
+        //   • A record already exists today (regardless of whether
+        //     time_out is NULL or already filled) → Time Out
+        //     (update that record's time_out with the current time)
+        //
+        // This means the FIRST scan of the day is always Time In, and
+        // every subsequent scan on the same day simply overwrites
+        // time_out with the latest time — the Time In is never changed.
+        // ---------------------------------------------------------------
 
-        if ($openRecord) {
+        // Look for ANY existing attendance record for this student today.
+        // We take the earliest one (first Time In) so subsequent scans
+        // always update the same original record.
+        $existingRecord = Attendance::where('id_number', $idNumber)
+                                    ->whereDate('date', $todayStr)
+                                    ->orderBy('time_in')
+                                    ->first();
+
+        if ($existingRecord) {
             // ---- TIME OUT ----
-            // An open record exists → the student is leaving, so we fill in time_out
-            $timeOutDatetime = now()->format('Y-m-d H:i:s');
-            $openRecord->update(['time_out' => $timeOutDatetime]);
+            // A record exists for today — update time_out to the current time.
+            // This covers both: a record that already has a time_out (i.e. the
+            // student is passing the reader again) and one that doesn't yet.
+            $existingRecord->update(['time_out' => now()->format('Y-m-d H:i:s')]);
 
             $action       = 'time_out';
-            $attendanceId = $openRecord->id;
-            $timeValue    = now()->format('h:i A'); // e.g. "02:35 PM" for the kiosk display
+            $attendanceId = $existingRecord->id;
+            $timeValue    = now()->format('h:i A');
         } else {
             // ---- TIME IN ----
-            // No open record → the student is arriving, so we create a new row
-            $timeInDatetime = now()->format('Y-m-d H:i:s');
-
+            // No record at all for today → first scan of the day.
             $newRecord = Attendance::create([
                 'id_number'      => $idNumber,
                 'last_name'      => $student->last_name,
                 'first_name'     => $student->first_name,
                 'middle_initial' => $student->middle_initial,
-                'time_in'        => $timeInDatetime,
+                'time_in'        => now()->format('Y-m-d H:i:s'),
                 'date'           => $todayStr,
             ]);
 
