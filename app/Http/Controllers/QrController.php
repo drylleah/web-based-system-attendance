@@ -96,11 +96,23 @@ class QrController extends Controller
         $todayStr = now()->toDateString();
 
         // ---------------------------------------------------------------
-        // New attendance logic — mirrors RfidController::scan()
+        // Attendance logic — identical to RfidController::scan().
         //
-        // First scan today  → Time In  (create new row)
-        // Any later scan    → Time Out (update time_out on the same row)
+        // Rule: one attendance record per student per day.
+        //   • No record today at all  → Time In  (create new row,
+        //                               time_out remains NULL)
+        //   • A record already exists today (regardless of whether
+        //     time_out is NULL or already filled) → Time Out
+        //     (update that record's time_out with the current time)
+        //
+        // The FIRST scan of the day is always Time In; every subsequent
+        // scan on the same day overwrites time_out with the latest time.
+        // The Time In value is never changed after it is first set.
         // ---------------------------------------------------------------
+
+        // Look for ANY existing attendance record for this student today.
+        // Take the earliest one (first Time In) so subsequent scans
+        // always update the same original record.
         $existingRecord = Attendance::where('id_number', $idNumber)
                                     ->whereDate('date', $todayStr)
                                     ->orderBy('time_in')
@@ -108,21 +120,23 @@ class QrController extends Controller
 
         if ($existingRecord) {
             // ---- TIME OUT ----
+            // A record exists for today — update time_out to the current time.
+            // Covers both: a record that already has a time_out (student
+            // passing the reader again) and one that doesn't yet.
             $existingRecord->update(['time_out' => now()->format('Y-m-d H:i:s')]);
 
             $action       = 'time_out';
             $attendanceId = $existingRecord->id;
         } else {
             // ---- TIME IN ----
+            // No record at all for today → first scan of the day.
             $newRecord = Attendance::create([
                 'id_number'      => $idNumber,
                 'last_name'      => $reg->last_name,
                 'first_name'     => $reg->first_name,
                 'middle_initial' => $reg->middle_initial,
                 'time_in'        => now()->format('Y-m-d H:i:s'),
-                'time_out'       => null,
                 'date'           => $todayStr,
-                'remarks'        => 'QR scan',
             ]);
 
             $action       = 'time_in';

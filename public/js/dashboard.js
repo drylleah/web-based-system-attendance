@@ -368,13 +368,13 @@ async function loadAttendance(query = '') {
 }
 loadAttendance();
 
-// ---- Auto-poll: silently refresh the table every 5 seconds ----
+// ---- Auto-poll: silently refresh the table every 2 seconds ----
 // This ensures that when a user scans Time In or Time Out on the kiosk,
 // the Dashboard updates the existing entry (or adds a new one) without
 // requiring a manual Refresh click.
 setInterval(() => {
   loadAttendance(searchInput.value.trim());
-}, 5000);
+}, 2000);
 
 // ---- Search ----
 let searchTimer;

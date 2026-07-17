@@ -291,16 +291,26 @@ class AttendanceController extends Controller
     }
 
     // ---------------------------------------------------------------
-    // POST /api/attendance/manual  — PUBLIC (no login required)
+    // POST /api/attendance/manual  — ADMIN Manual Log
     //
-    // Power-outage / RFID-offline fallback.  Allows a staff member to
-    // manually log a student's time-in or time-out directly from the
-    // kiosk page without an admin session.
+    // Allows an administrator to manually log a student's Time In or
+    // Time Out using the current server time.  The toggle on the UI
+    // selects which field to write.
     //
-    // Required fields: id_number, last_name, first_name, log_type ('time_in' | 'time_out')
+    // Upsert behaviour:
+    //   log_type = 'time_in':
+    //     • If a record already exists for this id_number today,
+    //       overwrite time_in with now() — time_out is preserved.
+    //     • If no record exists, create one with time_in = now().
+    //
+    //   log_type = 'time_out':
+    //     • If a record already exists for this id_number today,
+    //       overwrite time_out with now() — time_in is preserved.
+    //     • If no record exists, create one with both time_in and
+    //       time_out set to now() (so there is always a complete row).
+    //
+    // Required fields: id_number, last_name, first_name, log_type
     // Optional fields: middle_initial, remarks
-    // The date and time are always set to NOW on the server so the
-    // record cannot be backdated from the kiosk.
     // ---------------------------------------------------------------
     public function manualLog(Request $request): JsonResponse
     {
@@ -308,7 +318,7 @@ class AttendanceController extends Controller
         $lastName      = trim($request->input('last_name', ''));
         $firstName     = trim($request->input('first_name', ''));
         $middleInitial = trim($request->input('middle_initial', ''));
-        $logType       = $request->input('log_type', 'time_in'); // 'time_in' or 'time_out'
+        $logType       = $request->input('log_type', 'time_in'); // 'time_in' | 'time_out'
         $remarks       = trim($request->input('remarks', ''));
 
         // Validate required fields
@@ -328,30 +338,52 @@ class AttendanceController extends Controller
         $dateStr = $now->toDateString();
         $nowDt   = $now->format('Y-m-d H:i:s');
 
-        if ($logType === 'time_in') {
-            // Create a new time-in record
-            Attendance::create([
-                'id_number'      => $idNumber,
-                'last_name'      => $lastName,
-                'first_name'     => $firstName,
-                'middle_initial' => $middleInitial ?: null,
-                'time_in'        => $nowDt,
-                'time_out'       => null,
-                'date'           => $dateStr,
-                'remarks'        => $remarks ?: 'Manual log (power outage)',
-            ]);
-        } else {
-            // Find the latest open record for this student today and close it
-            $open = Attendance::where('id_number', $idNumber)
-                              ->whereDate('date', $dateStr)
-                              ->whereNull('time_out')
-                              ->orderByDesc('time_in')
-                              ->first();
+        // Look for an existing record for this student today
+        $existing = Attendance::where('id_number', $idNumber)
+                               ->whereDate('date', $dateStr)
+                               ->orderBy('time_in')
+                               ->first();
 
-            if ($open) {
-                $open->update(['time_out' => $nowDt]);
+        if ($logType === 'time_in') {
+            if ($existing) {
+                // Overwrite time_in with the current time; preserve the
+                // existing time_out so a partial update doesn't wipe it
+                $existing->update([
+                    'last_name'      => $lastName,
+                    'first_name'     => $firstName,
+                    'middle_initial' => $middleInitial ?: null,
+                    'time_in'        => $nowDt,
+                    'time_out'       => $existing->time_out,
+                    'date'           => $dateStr,
+                    'remarks'        => $remarks ?: null,
+                ]);
             } else {
-                // No open record — create a complete row with both times equal
+                Attendance::create([
+                    'id_number'      => $idNumber,
+                    'last_name'      => $lastName,
+                    'first_name'     => $firstName,
+                    'middle_initial' => $middleInitial ?: null,
+                    'time_in'        => $nowDt,
+                    'time_out'       => null,
+                    'date'           => $dateStr,
+                    'remarks'        => $remarks ?: null,
+                ]);
+            }
+        } else {
+            // log_type = 'time_out'
+            if ($existing) {
+                // Preserve the existing time_in; only write time_out
+                $existing->update([
+                    'last_name'      => $lastName,
+                    'first_name'     => $firstName,
+                    'middle_initial' => $middleInitial ?: null,
+                    'time_out'       => $nowDt,
+                    'date'           => $dateStr,
+                    'remarks'        => $remarks ?: null,
+                ]);
+            } else {
+                // No record yet — create a complete row so the student
+                // always has a visible entry even without a prior time-in
                 Attendance::create([
                     'id_number'      => $idNumber,
                     'last_name'      => $lastName,
@@ -360,7 +392,7 @@ class AttendanceController extends Controller
                     'time_in'        => $nowDt,
                     'time_out'       => $nowDt,
                     'date'           => $dateStr,
-                    'remarks'        => $remarks ?: 'Manual log (power outage) — no open time-in found',
+                    'remarks'        => $remarks ?: null,
                 ]);
             }
         }

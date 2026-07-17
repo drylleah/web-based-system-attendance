@@ -230,8 +230,18 @@ const scanCountMap = {};
 function showSuccessPanel(data) {
   const id = data.id_number || '';
 
-  scanCountMap[id] = (scanCountMap[id] || 0) + 1;
-  const displayIn  = (scanCountMap[id] % 2 === 1);
+  // Prefer the action field returned by the server (both RFID and QR
+  // return 'time_in' or 'time_out').  Fall back to the odd/even counter
+  // only when action is absent (legacy responses).
+  let displayIn;
+  if (data.action === 'time_in') {
+    displayIn = true;
+  } else if (data.action === 'time_out') {
+    displayIn = false;
+  } else {
+    scanCountMap[id] = (scanCountMap[id] || 0) + 1;
+    displayIn = (scanCountMap[id] % 2 === 1);
+  }
 
   resultBadge.className      = `result-badge result-badge--${displayIn ? 'in' : 'out'}`;
   badgeIconIn.style.display  = displayIn ? 'block' : 'none';
@@ -575,9 +585,9 @@ function resetMlForm() {
 function setMlLogType(type) {
   mlLogType = type;
 
-  mlToggleIn.classList.toggle('ml-toggle--active',     type === 'time_in');
-  mlToggleIn.classList.toggle('ml-toggle--active-out', false);
-  mlToggleOut.classList.toggle('ml-toggle--active',    false);
+  mlToggleIn.classList.toggle('ml-toggle--active',      type === 'time_in');
+  mlToggleIn.classList.toggle('ml-toggle--active-out',  false);
+  mlToggleOut.classList.toggle('ml-toggle--active',     false);
   mlToggleOut.classList.toggle('ml-toggle--active-out', type === 'time_out');
 
   if (type === 'time_in') {
@@ -613,7 +623,6 @@ function showMlToast(msg, type = 'success') {
   mlToastTimer = setTimeout(() => { mlToast.className = 'ml-toast'; }, 3500);
 }
 
-
 // -- Submit --
 mlSubmitBtn.addEventListener('click', async () => {
   clearMlError();
@@ -635,8 +644,8 @@ mlSubmitBtn.addEventListener('click', async () => {
     const res  = await fetch('/api/attendance/manual', {
       method:  'POST',
       headers: {
-        'Content-Type':  'application/json',
-        'X-CSRF-TOKEN':  document.querySelector('meta[name="csrf-token"]').content,
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
       },
       body: JSON.stringify({
         id_number,
@@ -929,8 +938,42 @@ async function processQrAttendance(token) {
     if (res.ok && data.success) {
       qrsLastToken = token;
       closeQrScanner();
-      // Route through the queue so it doesn't trample an active RFID result
-      enqueue(data.id_number || token);
+
+      // Show the result directly from the QR scan response — do NOT
+      // call enqueue() here, as that would trigger a second RFID scan
+      // which would immediately fill time_out on the record just created.
+      //
+      // We still need to respect the queue: if something is already
+      // processing (an RFID scan on screen), let it finish and then
+      // show this QR result as the next item.  Otherwise show it now
+      // and drive the same DISPLAY_MS → advance cycle that processNext uses.
+      const showQrResult = () => {
+        processing = true;
+        showSuccessPanel(data);
+        setTimeout(() => {
+          activeId   = null;
+          processing = false;
+          if (scanQueue.length > 0) {
+            processNext();
+          } else {
+            resetToIdle();
+          }
+        }, DISPLAY_MS);
+      };
+
+      if (processing) {
+        // Something is already on screen — queue a synthetic callback
+        // that fires after the current item's timer clears processing.
+        // Poll until the slot is free, then show our result.
+        const waitForSlot = setInterval(() => {
+          if (!processing) {
+            clearInterval(waitForSlot);
+            showQrResult();
+          }
+        }, 100);
+      } else {
+        showQrResult();
+      }
 
     } else {
       const msg = data.error ||
