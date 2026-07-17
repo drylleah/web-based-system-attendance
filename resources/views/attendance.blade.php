@@ -80,7 +80,7 @@
       <div class="result-progress-wrap">
         <div class="result-progress-bar" id="resultProgressBar"></div>
       </div>
-      <p class="result-return-hint">Returning to standby…</p>
+      <p class="result-return-hint" id="successReturnHint">Returning to standby…</p>
     </div>
 
     <!-- ERROR STATE -->
@@ -95,14 +95,34 @@
       <div class="result-progress-wrap">
         <div class="result-progress-bar result-progress-bar--error" id="errorProgressBar"></div>
       </div>
-      <p class="result-return-hint">Returning to standby…</p>
+      <p class="result-return-hint" id="errorReturnHint">Returning to standby…</p>
     </div>
 
   </main>
 
+  <!--
+    Hidden RFID input — positioned off-screen so it is never visible but
+    always accepts keystrokes from the UHF reader. The reader types the
+    School ID then presses Enter; attendance.js listens for Enter and
+    enqueues the value immediately, even while another result is displayed.
+  -->
+  <input
+    type="text"
+    id="rfidHiddenInput"
+    class="rfid-hidden-input"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
+    maxlength="50"
+    aria-hidden="true"
+    tabindex="-1"
+  >
+
   <!-- ===== FOOTER ===== -->
   <footer class="footer">
     <span>Lorma Colleges &mdash; Attendance System</span>
+    <span id="footerQueueBadge" class="footer-queue-badge"></span>
     <span id="footerCardId"></span>
   </footer>
 

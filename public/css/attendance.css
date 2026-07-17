@@ -1436,3 +1436,64 @@ html, body {
   .qrs-camera-col { border-right: none; border-bottom: 1px solid #1f1f1f; padding: 16px; }
   .qrs-result-col { padding: 18px 16px; }
 }
+
+/* ============================================================
+   HIDDEN RFID INPUT
+   Positioned completely off-screen.  The UHF reader types into
+   this field because it stays focused at all times, but it is
+   invisible to the user.
+   ============================================================ */
+.rfid-hidden-input {
+  position: fixed;
+  left: -9999px;
+  top:  -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  /* Do not set display:none or visibility:hidden — the element must
+     remain in the accessibility tree so it can receive focus. */
+}
+
+/* ============================================================
+   FOOTER — queue badge
+   Shown when one or more scans are waiting in the queue.
+   Sits between the branding text and the current-ID readout.
+   ============================================================ */
+.footer-queue-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  background: var(--amber-main);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  border-radius: 999px;
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.footer-queue-badge.visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+/* Pulsing dot before the text */
+.footer-queue-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #fff;
+  border-radius: 50%;
+  animation: queue-badge-pulse 1.1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes queue-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}

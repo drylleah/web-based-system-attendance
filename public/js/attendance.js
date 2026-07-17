@@ -1,29 +1,34 @@
 /**
  * attendance.js — RFID Kiosk / Scanner page logic
  *
- * Flow:
- *  1. On page load, read ?id= from the URL (the School ID Number).
- *     If found → immediately trigger a scan.
- *  2. User can also type a School ID in the sim box and click Scan.
- *  3. POST to /api/rfid/scan with { id_number }
- *     → success: show result panel
- *     → error:   show error panel
- *  4. After DISPLAY_MS milliseconds, reset to idle.
+ * Continuous-scan flow (UHF RFID reader support):
+ *  1. A hidden off-screen input (#rfidHiddenInput) is always focused so
+ *     the UHF reader can type a School ID and press Enter at any time,
+ *     even while another result is still being displayed.
+ *  2. Every Enter keystroke enqueues the ID. The queue processor fires
+ *     one doScan() at a time; when it finishes displaying it moves to
+ *     the next item automatically.
+ *  3. The visible sim box (#simCardInput) still works for manual testing.
+ *  4. A queue-count badge in the footer shows how many scans are waiting.
+ *  5. When the queue drains, the page returns to the normal idle state and
+ *     the hidden input recaptures focus.
  */
 
 'use strict';
 
-// ---- Config ----
-const DISPLAY_MS    = 5000;
+// ---- Timing ----
+const DISPLAY_MS = 5000;   // how long each result is shown (ms)
+
+// ---- Panels ----
 const IDLE_PANEL    = document.getElementById('panelIdle');
 const SUCCESS_PANEL = document.getElementById('panelSuccess');
 const ERROR_PANEL   = document.getElementById('panelError');
 
-// Clock
+// ---- Clock ----
 const clockTimeEl = document.getElementById('clockTime');
 const clockDateEl = document.getElementById('clockDate');
 
-// Success panel
+// ---- Success panel elements ----
 const resultBadge    = document.getElementById('resultBadge');
 const badgeIconIn    = document.getElementById('badgeIconIn');
 const badgeIconOut   = document.getElementById('badgeIconOut');
@@ -35,19 +40,25 @@ const resultTime     = document.getElementById('resultTime');
 const resultDate     = document.getElementById('resultDate');
 const resultProgress = document.getElementById('resultProgressBar');
 
-// Error panel
+// ---- Error panel elements ----
 const errorTitle    = document.getElementById('errorTitle');
 const errorMsg      = document.getElementById('errorMsg');
 const errorProgress = document.getElementById('errorProgressBar');
 
-// Footer
-const footerCardId = document.getElementById('footerCardId');
+// ---- Footer ----
+const footerCardId    = document.getElementById('footerCardId');
+const footerQueueBadge = document.getElementById('footerQueueBadge');
 
-// Sim box
+// ---- Sim box (manual testing) ----
 const simInput   = document.getElementById('simCardInput');
 const simScanBtn = document.getElementById('simScanBtn');
 
-// ------------------------------------------------------------------ clock --
+// ---- Hidden RFID input (always focused, off-screen) ----
+const rfidInput = document.getElementById('rfidHiddenInput');
+
+// ================================================================
+//  CLOCK
+// ================================================================
 function updateClock() {
   const now = new Date();
   clockTimeEl.textContent = now.toLocaleTimeString('en-US', {
@@ -60,7 +71,96 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 1000);
 
-// ------------------------------------------------------------------ panels --
+// ================================================================
+//  SCAN QUEUE
+//
+//  The queue holds raw ID strings waiting to be processed.
+//  Only one scan is active at a time; when it completes (after
+//  DISPLAY_MS ms) the next item is dequeued automatically.
+// ================================================================
+const scanQueue  = [];      // pending School IDs
+let   processing = false;   // true while a scan result is on screen
+let   activeId   = null;    // School ID currently being displayed
+
+/**
+ * Add a School ID to the back of the queue and start the processor
+ * if nothing is currently running.
+ *
+ * Duplicates are silently dropped if the same ID is already:
+ *  - being displayed right now (activeId), or
+ *  - already somewhere in the queue.
+ *
+ * This prevents UHF readers from flooding the queue when the same
+ * tag stays within range across multiple read cycles.
+ */
+function enqueue(rawId) {
+  const id = String(rawId).trim().toUpperCase();
+  if (!id) return;
+
+  // Drop if this ID is the one currently on screen
+  if (id === activeId) return;
+
+  // Drop if this ID is already waiting in the queue
+  if (scanQueue.includes(id)) return;
+
+  scanQueue.push(id);
+  updateQueueBadge();
+  processNext();
+}
+
+/**
+ * If nothing is processing and the queue has items, dequeue one
+ * and run a full scan cycle (fetch + display + wait + advance).
+ */
+function processNext() {
+  if (processing || scanQueue.length === 0) return;
+  processing = true;
+
+  const id = scanQueue.shift();
+  activeId  = id;            // mark this ID as currently on screen
+  updateQueueBadge();
+
+  // Show which ID is being processed in the footer
+  footerCardId.textContent = `ID: ${id}`;
+
+  doScan(id).then(() => {
+    // doScan resolves immediately after showing the panel.
+    // We wait DISPLAY_MS before moving on so the user can read it.
+    setTimeout(() => {
+      activeId   = null;     // display slot is now free
+      processing = false;
+      if (scanQueue.length > 0) {
+        processNext();          // more items waiting — show next
+      } else {
+        resetToIdle();          // queue empty — back to idle
+      }
+    }, DISPLAY_MS);
+  });
+}
+
+/** Update the queue-count badge in the footer and the return-hint text. */
+function updateQueueBadge() {
+  const count = scanQueue.length;
+  if (count > 0) {
+    footerQueueBadge.textContent = `${count} waiting in queue`;
+    footerQueueBadge.classList.add('visible');
+
+    // Tell the user the system is busy but not dropping scans
+    const hint = count === 1
+      ? 'Next scan ready — showing shortly…'
+      : `${count} scans queued — processing automatically…`;
+    document.getElementById('successReturnHint').textContent = hint;
+    document.getElementById('errorReturnHint').textContent   = hint;
+  } else {
+    footerQueueBadge.classList.remove('visible');
+    document.getElementById('successReturnHint').textContent = 'Returning to standby…';
+    document.getElementById('errorReturnHint').textContent   = 'Returning to standby…';
+  }
+}
+
+// ================================================================
+//  PANELS
+// ================================================================
 let resetTimer = null;
 
 function showPanel(which) {
@@ -72,29 +172,33 @@ function showPanel(which) {
 
 function resetToIdle() {
   clearTimeout(resetTimer);
+  activeId = null;
   footerCardId.textContent = '';
+  updateQueueBadge();
   showPanel(IDLE_PANEL);
-  simInput.value = '';
-  simInput.focus();
+  simInput.value  = '';
+  rfidInput.value = '';
+  refocusHiddenInput();
 }
 
-function startProgressBar(barEl, durationMs, cb) {
-  clearTimeout(resetTimer);
+/**
+ * Animate a progress bar for DISPLAY_MS.
+ * Unlike the original, we do NOT set a setTimeout here —
+ * the queue processor owns the timing after doScan resolves.
+ */
+function animateProgressBar(barEl) {
   barEl.style.transition = 'none';
   barEl.style.transform  = 'scaleX(1)';
-  void barEl.offsetWidth;
-  barEl.style.transition = `transform ${durationMs}ms linear`;
+  void barEl.offsetWidth;                          // force reflow
+  barEl.style.transition = `transform ${DISPLAY_MS}ms linear`;
   barEl.style.transform  = 'scaleX(0)';
-  resetTimer = setTimeout(cb, durationMs);
 }
 
-// ------------------------------------------------------------------ scan --
-async function doScan(rawId) {
-  const idNumber = String(rawId).trim().toUpperCase();
-  if (!idNumber) return;
 
-  footerCardId.textContent = `ID: ${idNumber}`;
-
+// ================================================================
+//  SCAN  (returns a Promise that resolves once the panel is shown)
+// ================================================================
+async function doScan(idNumber) {
   try {
     const res  = await fetch('/api/rfid/scan', {
       method:  'POST',
@@ -111,20 +215,21 @@ async function doScan(rawId) {
   } catch {
     showErrorPanel('Cannot reach the server. Check your connection.', idNumber);
   }
+  // Resolved — the panel is now visible. The queue processor waits
+  // DISPLAY_MS before calling processNext() or resetToIdle().
 }
 
-// ------------------------------------------------------------------ success panel --
+// ================================================================
+//  SUCCESS PANEL
+// ================================================================
 
 // Per-ID scan counter — used only for alternating the displayed label.
-// Key: id_number string. Value: number of successful scans this session.
-// Resets on page reload. Does NOT affect attendance records.
+// Odd (1, 3, 5…) → TIME IN   Even (2, 4, 6…) → TIME OUT
 const scanCountMap = {};
 
 function showSuccessPanel(data) {
   const id = data.id_number || '';
 
-  // Increment scan count for this ID and derive display label.
-  // Odd count (1, 3, 5…) → TIME IN   Even count (2, 4, 6…) → TIME OUT
   scanCountMap[id] = (scanCountMap[id] || 0) + 1;
   const displayIn  = (scanCountMap[id] % 2 === 1);
 
@@ -148,10 +253,12 @@ function showSuccessPanel(data) {
   });
 
   showPanel(SUCCESS_PANEL);
-  startProgressBar(resultProgress, DISPLAY_MS, resetToIdle);
+  animateProgressBar(resultProgress);
 }
 
-// ------------------------------------------------------------------ error panel --
+// ================================================================
+//  ERROR PANEL
+// ================================================================
 function showErrorPanel(message, idNumber, status) {
   const titles = {
     404: 'ID Not Registered',
@@ -163,30 +270,80 @@ function showErrorPanel(message, idNumber, status) {
   footerCardId.textContent = idNumber ? `ID attempted: ${idNumber}` : '';
 
   showPanel(ERROR_PANEL);
-  startProgressBar(errorProgress, DISPLAY_MS, resetToIdle);
+  animateProgressBar(errorProgress);
 }
 
-// ------------------------------------------------------------------ sim box --
+
+// ================================================================
+//  HIDDEN RFID INPUT
+//  Always stays off-screen and focused so the UHF reader can type
+//  at any time, even while a result panel is being displayed.
+// ================================================================
+
+/**
+ * Refocus the hidden input unless a modal is open.
+ * We skip refocus when the card manager, manual log, or QR scanner
+ * overlay is visible so the user can still type in those forms.
+ */
+function refocusHiddenInput() {
+  const modalOpen =
+    document.getElementById('cardManagerOverlay').classList.contains('show') ||
+    document.getElementById('manualLogOverlay').classList.contains('show')   ||
+    document.getElementById('qrScannerOverlay').classList.contains('show');
+
+  if (!modalOpen) {
+    rfidInput.focus();
+  }
+}
+
+// Capture keystrokes from the hidden input.
+// The UHF reader types the School ID character-by-character then sends Enter.
+rfidInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const val = rfidInput.value.trim();
+    rfidInput.value = '';   // clear immediately so next scan starts fresh
+    if (val) enqueue(val);
+    e.preventDefault();
+  }
+});
+
+// Re-focus the hidden input whenever the page regains focus or the user
+// clicks anywhere on the stage that isn't an interactive element.
+window.addEventListener('focus', refocusHiddenInput);
+document.addEventListener('click', (e) => {
+  // Don't steal focus from modal form fields or buttons
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'TEXTAREA') return;
+  refocusHiddenInput();
+});
+
+// ================================================================
+//  SIM BOX  (manual testing — unchanged behaviour)
+// ================================================================
 simScanBtn.addEventListener('click', () => {
   const val = simInput.value.trim();
   if (!val) { simInput.focus(); return; }
-  doScan(val);
+  simInput.value = '';
+  enqueue(val);
 });
 
 simInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') simScanBtn.click();
 });
 
-// ------------------------------------------------------------------ URL param --
+// ================================================================
+//  URL PARAM  (?id=XXXX)
+// ================================================================
 (function checkUrlParam() {
   const params = new URLSearchParams(window.location.search);
   const id     = params.get('id');
   if (id) {
-    setTimeout(() => doScan(id), 300);
+    setTimeout(() => enqueue(id), 300);
   } else {
-    simInput.focus();
+    refocusHiddenInput();
   }
 })();
+
 
 // ================================================================
 //  CARD MANAGER MODAL
@@ -221,7 +378,10 @@ openCmBtn.addEventListener('click', () => {
 closeCmBtn.addEventListener('click', closeModal);
 cmOverlay.addEventListener('click', (e) => { if (e.target === cmOverlay) closeModal(); });
 
-function closeModal() { cmOverlay.classList.remove('show'); }
+function closeModal() {
+  cmOverlay.classList.remove('show');
+  refocusHiddenInput();
+}
 
 // -- Toast --
 let cmToastTimer;
@@ -253,8 +413,8 @@ regSubmitBtn.addEventListener('click', async () => {
   if (!last_name)  { showRegError('Last Name is required.');        return; }
   if (!first_name) { showRegError('First Name is required.');       return; }
 
-  regSubmitBtn.disabled     = true;
-  regSubmitBtn.textContent  = 'Registering…';
+  regSubmitBtn.disabled    = true;
+  regSubmitBtn.textContent = 'Registering…';
 
   try {
     const res  = await fetch('/api/rfid/cards', {
@@ -275,14 +435,15 @@ regSubmitBtn.addEventListener('click', async () => {
   } catch {
     showRegError('Server error. Make sure you are logged in as admin.');
   } finally {
-    regSubmitBtn.disabled   = false;
-    regSubmitBtn.innerHTML  = `
+    regSubmitBtn.disabled  = false;
+    regSubmitBtn.innerHTML = `
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
       </svg>
       Register Student`;
   }
 });
+
 
 // ----------------------------------------------------------------
 //  LIST STUDENTS
@@ -372,6 +533,7 @@ document.getElementById('cmSearch').addEventListener('input', (e) => {
   ));
 });
 
+
 // ================================================================
 //  MANUAL LOG MODAL
 // ================================================================
@@ -399,6 +561,7 @@ mlOverlay.addEventListener('click', (e) => { if (e.target === mlOverlay) closeMl
 
 function closeMlModal() {
   mlOverlay.classList.remove('show');
+  refocusHiddenInput();
 }
 
 function resetMlForm() {
@@ -417,7 +580,6 @@ function setMlLogType(type) {
   mlToggleOut.classList.toggle('ml-toggle--active',    false);
   mlToggleOut.classList.toggle('ml-toggle--active-out', type === 'time_out');
 
-  // Update submit button label and icon
   if (type === 'time_in') {
     mlSubmitBtn.innerHTML = `
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -439,14 +601,8 @@ mlToggleIn.addEventListener('click',  () => setMlLogType('time_in'));
 mlToggleOut.addEventListener('click', () => setMlLogType('time_out'));
 
 // -- Error helpers --
-function showMlError(msg) {
-  mlError.textContent = msg;
-  mlError.classList.add('show');
-}
-function clearMlError() {
-  mlError.textContent = '';
-  mlError.classList.remove('show');
-}
+function showMlError(msg) { mlError.textContent = msg; mlError.classList.add('show'); }
+function clearMlError()   { mlError.textContent = '';  mlError.classList.remove('show'); }
 
 // -- Toast --
 let mlToastTimer;
@@ -457,14 +613,15 @@ function showMlToast(msg, type = 'success') {
   mlToastTimer = setTimeout(() => { mlToast.className = 'ml-toast'; }, 3500);
 }
 
+
 // -- Submit --
 mlSubmitBtn.addEventListener('click', async () => {
   clearMlError();
 
-  const last_name     = document.getElementById('ml_last_name').value.trim();
-  const first_name    = document.getElementById('ml_first_name').value.trim();
+  const last_name      = document.getElementById('ml_last_name').value.trim();
+  const first_name     = document.getElementById('ml_first_name').value.trim();
   const middle_initial = document.getElementById('ml_mi').value.trim();
-  const id_number     = document.getElementById('ml_id_number').value.trim().toUpperCase();
+  const id_number      = document.getElementById('ml_id_number').value.trim().toUpperCase();
 
   if (!last_name)  { showMlError('Last Name is required.');        return; }
   if (!first_name) { showMlError('First Name is required.');       return; }
@@ -495,12 +652,10 @@ mlSubmitBtn.addEventListener('click', async () => {
     if (res.ok && data.success) {
       const actionLabel = mlLogType === 'time_in' ? 'Time In' : 'Time Out';
       showMlToast(`${actionLabel} saved for ${data.full_name} at ${data.time}`);
-
-      // Clear form fields but keep modal open for the next entry
       ['ml_last_name', 'ml_first_name', 'ml_mi', 'ml_id_number']
-    .forEach(id => { document.getElementById(id).value = ''; });
-  clearMlError();
-  document.getElementById('ml_last_name').focus();
+        .forEach(id => { document.getElementById(id).value = ''; });
+      clearMlError();
+      document.getElementById('ml_last_name').focus();
     } else {
       showMlError(data.error || 'Failed to save. Please try again.');
     }
@@ -512,7 +667,7 @@ mlSubmitBtn.addEventListener('click', async () => {
   }
 });
 
-// Allow Enter key on any input to trigger submit
+// Allow Enter key on any ML input to trigger submit
 ['ml_last_name', 'ml_first_name', 'ml_mi', 'ml_id_number'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', (e) => {
     if (e.key === 'Enter') mlSubmitBtn.click();
@@ -530,9 +685,6 @@ mlSubmitBtn.addEventListener('click', async () => {
 //  TWO CONSECUTIVE ticks before committing.  On the second match we
 //  freeze the canvas, do one final clean decode from the frozen
 //  frame, then hand the token to the API.
-//
-//  This avoids false triggers from motion blur and gives jsQR a
-//  stable image to work with on standard 720p webcams.
 //
 //  State machine
 //  ─────────────
@@ -564,18 +716,17 @@ document.getElementById('qrsScanAgain').addEventListener('click',    resumeScann
 document.getElementById('qrsScanAgainErr').addEventListener('click', resumeScanning);
 
 // ---- Constants ----
-const QRS_INTERVAL_MS  = 80;    // ~12 fps tick — fast enough, light on CPU
-const QRS_ROI_SIZE     = 640;   // px — canvas size passed to jsQR
-const QRS_CONFIRM_NEEDED = 1;   // single confirmed read is enough — reduces latency on 720p webcams
+const QRS_INTERVAL_MS    = 80;   // ~12 fps tick
+const QRS_CONFIRM_NEEDED = 1;    // single confirmed read is enough
 
 // ---- State ----
 let qrsStream         = null;
 let qrsTimerId        = null;
-let qrsScanning       = false;   // tick loop active
-let qrsProcessing     = false;   // API call in flight — hard block on new scans
-let qrsLastToken      = null;    // last successfully processed token
-let qrsCandidateToken = null;    // token seen in current tick
-let qrsConfirmCount   = 0;       // how many consecutive ticks matched candidate
+let qrsScanning       = false;
+let qrsProcessing     = false;
+let qrsLastToken      = null;
+let qrsCandidateToken = null;
+let qrsConfirmCount   = 0;
 
 // ----------------------------------------------------------------
 //  HELPERS
@@ -633,9 +784,9 @@ async function openQrScanner() {
     qrsCamErrorMsg.textContent        = msg;
     setQrsStatus('error', 'Camera unavailable');
     qrsSweep.style.animationPlayState = 'paused';
-    console.error('[QR] getUserMedia failed:', err.name, err.message);
   }
 }
+
 
 // ----------------------------------------------------------------
 //  CLOSE MODAL
@@ -655,6 +806,7 @@ function closeQrScanner() {
   qrsCandidateToken = null;
   qrsConfirmCount   = 0;
   qrsProcessing     = false;
+  refocusHiddenInput();
 }
 
 function stopCamera() {
@@ -688,20 +840,12 @@ function scheduleTick() {
 }
 
 function tick() {
-  if (!qrsScanning || qrsProcessing) {
-    scheduleTick();
-    return;
-  }
+  if (!qrsScanning || qrsProcessing) { scheduleTick(); return; }
 
   if (qrsVideo.readyState < qrsVideo.HAVE_ENOUGH_DATA || qrsVideo.videoWidth === 0) {
-    scheduleTick();
-    return;
+    scheduleTick(); return;
   }
 
-  // ---- Draw FULL frame scaled to 640×360 ----
-  // Scanning the full frame (not just center crop) means the QR code
-  // is detected regardless of where it appears in the viewfinder.
-  // 640×360 is fast for jsQR while retaining enough detail for a UUID QR.
   const vw  = qrsVideo.videoWidth;
   const vh  = qrsVideo.videoHeight;
   const ctx = qrsCanvas.getContext('2d', { willReadFrequently: true });
@@ -709,7 +853,6 @@ function tick() {
   qrsCanvas.height = Math.round(640 * vh / vw);
   ctx.drawImage(qrsVideo, 0, 0, qrsCanvas.width, qrsCanvas.height);
 
-  // ---- Attempt decode ----
   const imageData = ctx.getImageData(0, 0, qrsCanvas.width, qrsCanvas.height);
   const result    = jsQR(imageData.data, qrsCanvas.width, qrsCanvas.height, {
     inversionAttempts: 'attemptBoth',
@@ -717,37 +860,24 @@ function tick() {
 
   if (result && result.data) {
     const token = result.data.trim();
-    console.log('[QR] jsQR decoded:', token.substring(0, 20) + '…');
-
     if (!token) { resetCandidate(); scheduleTick(); return; }
-
-    // Skip if this token was already successfully processed
     if (token === qrsLastToken) { scheduleTick(); return; }
 
     if (token === qrsCandidateToken) {
-      // Same token again — increment confirmation counter
       qrsConfirmCount++;
     } else {
-      // New token seen — start fresh confirmation
       qrsCandidateToken = token;
       qrsConfirmCount   = 1;
     }
 
     if (qrsConfirmCount >= QRS_CONFIRM_NEEDED) {
-      // ---- CONFIRMED — freeze the frame and commit ----
-      // The canvas already holds the most recent clean frame of this
-      // token. Stop the loop immediately to prevent any further decodes
-      // while the API call is in flight.
       stopScanLoop();
       commitToken(token);
       return;
     }
 
-    // Not yet confirmed — update status and keep scanning
     setQrsStatus('scanning', 'Hold steady…');
-
   } else {
-    // No QR in this frame — reset candidate streak
     resetCandidate();
     const dots = ['.', '..', '...'];
     qrsStatusText.textContent = 'Scanning' + dots[Math.floor(Date.now() / 400) % 3];
@@ -763,35 +893,28 @@ function resetCandidate() {
 
 // ----------------------------------------------------------------
 //  COMMIT TOKEN
-//  Called once a token has been confirmed across consecutive ticks.
-//  The canvas holds a frozen clean frame — we do one final decode
-//  from it to get the authoritative token string, then call the API.
 // ----------------------------------------------------------------
 function commitToken(confirmedToken) {
-  // Final authoritative decode from the frozen canvas frame
   const ctx       = qrsCanvas.getContext('2d', { willReadFrequently: true });
   const imageData = ctx.getImageData(0, 0, qrsCanvas.width, qrsCanvas.height);
   const final     = jsQR(imageData.data, qrsCanvas.width, qrsCanvas.height, {
     inversionAttempts: 'attemptBoth',
   });
 
-  // Use the final decode result if available, fall back to confirmed token
   const token = (final && final.data) ? final.data.trim() : confirmedToken;
-
-  console.log('[QR] Committed token:', token);
 
   qrsProcessing = true;
   qrsSweep.style.animationPlayState = 'paused';
   setQrsStatus('scanning', 'Processing…');
   showQrsPanel('looking');
 
-  processAttendance(token);
+  processQrAttendance(token);
 }
 
 // ----------------------------------------------------------------
-//  PROCESS ATTENDANCE — POST /api/qr/scan
+//  PROCESS QR ATTENDANCE — POST /api/qr/scan
 // ----------------------------------------------------------------
-async function processAttendance(token) {
+async function processQrAttendance(token) {
   try {
     const res  = await fetch('/api/qr/scan', {
       method:  'POST',
@@ -804,14 +927,12 @@ async function processAttendance(token) {
     const data = await res.json();
 
     if (res.ok && data.success) {
-      // ---- SUCCESS ----
-      qrsLastToken = token;   // prevent re-scan of same token
+      qrsLastToken = token;
       closeQrScanner();
-      showSuccessPanel(data);
-      // Scanning resumes automatically next time the modal is opened
+      // Route through the queue so it doesn't trample an active RFID result
+      enqueue(data.id_number || token);
 
     } else {
-      // ---- UNREGISTERED OR SERVER ERROR ----
       const msg = data.error ||
         (res.status === 404
           ? 'This QR code is not registered for attendance.'
@@ -834,12 +955,10 @@ async function processAttendance(token) {
 }
 
 // ----------------------------------------------------------------
-//  AUTO-RESUME — 3 s cooldown after a failed lookup
+//  AUTO-RESUME — 3 s cooldown after a failed QR lookup
 // ----------------------------------------------------------------
 function scheduleAutoResume() {
-  setTimeout(() => {
-    resumeScanning();
-  }, 3000);
+  setTimeout(resumeScanning, 3000);
 }
 
 // ----------------------------------------------------------------
