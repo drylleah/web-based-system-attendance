@@ -352,11 +352,18 @@ class TimeRecordController extends Controller
     // POST /api/timerecord/save
     //
     // The core "Save to Time Record" workflow:
-    //   1. Counts how many rows are in the live attendance table.
-    //   2. Bulk-inserts all of them into time_records using a single
-    //      INSERT … SELECT statement for efficiency.
-    //   3. Deletes every row from the attendance table (clears the
-    //      live scanner list so it's ready for the next session).
+    //   1. Fetches all rows from the live attendance table.
+    //   2. For each row, checks whether a time_record already exists
+    //      for the same id_number + date:
+    //        - Match found  → update the existing row's time_in, time_out,
+    //          name fields, and remarks in place (no duplicate created).
+    //        - No match     → insert a new time_record row as before.
+    //   3. Deletes every row from the attendance table so it's ready
+    //      for the next session.
+    //
+    // This upsert approach means that clicking "Save to Time Record"
+    // a second time for the same person on the same date simply
+    // refreshes their record rather than creating a duplicate.
     //
     // This is also triggered automatically by the Dashboard when the
     // scheduled end date/time is reached in Manual mode.
@@ -367,25 +374,55 @@ class TimeRecordController extends Controller
     public function save(Request $request): JsonResponse
     {
         // Check that there is at least one attendance row to save
-        $count = Attendance::count();
+        $attendanceRows = Attendance::all();
 
-        if ($count === 0) {
+        if ($attendanceRows->isEmpty()) {
             return response()->json(['error' => 'No attendance records to save.'], 400);
         }
 
-        // Bulk INSERT using a raw SQL statement: SELECT all columns from
-        // attendance and insert them directly into time_records.
-        // COALESCE ensures the date column is always filled — if it's NULL
-        // on the attendance row, we derive it from the time_in datetime.
-        \Illuminate\Support\Facades\DB::statement('
-            INSERT INTO time_records
-                (id_number, last_name, first_name, middle_initial, time_in, time_out, date, remarks, saved_at)
-            SELECT
-                id_number, last_name, first_name, middle_initial, time_in, time_out,
-                COALESCE(date, DATE(time_in)),
-                remarks, NOW()
-            FROM attendance
-        ');
+        $now = now();
+
+        foreach ($attendanceRows as $row) {
+            // Resolve the canonical date for this row: use the explicit
+            // date column when available, otherwise derive it from time_in.
+            $dateStr = $row->date
+                ?? ($row->time_in ? Carbon::parse($row->time_in)->toDateString() : $now->toDateString());
+
+            // Look for an existing time_record with the same School ID and date
+            $existing = TimeRecord::where('id_number', $row->id_number)
+                                  ->whereDate('date', $dateStr)
+                                  ->first();
+
+            if ($existing) {
+                // A record already exists for this person on this date —
+                // update it in place so no duplicate is created.
+                $existing->update([
+                    'last_name'      => $row->last_name,
+                    'first_name'     => $row->first_name,
+                    'middle_initial' => $row->middle_initial,
+                    'time_in'        => $row->time_in,
+                    'time_out'       => $row->time_out,
+                    'date'           => $dateStr,
+                    'remarks'        => $row->remarks,
+                    'saved_at'       => $now,
+                ]);
+            } else {
+                // No matching record — insert a fresh time_record row.
+                TimeRecord::create([
+                    'id_number'      => $row->id_number,
+                    'last_name'      => $row->last_name,
+                    'first_name'     => $row->first_name,
+                    'middle_initial' => $row->middle_initial,
+                    'time_in'        => $row->time_in,
+                    'time_out'       => $row->time_out,
+                    'date'           => $dateStr,
+                    'remarks'        => $row->remarks,
+                    'saved_at'       => $now,
+                ]);
+            }
+        }
+
+        $count = $attendanceRows->count();
 
         // Clear the live attendance table now that all rows are safely archived
         Attendance::query()->delete();

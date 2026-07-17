@@ -30,7 +30,15 @@ class AttendanceController extends Controller
     // ---------------------------------------------------------------
     // GET /api/attendance
     //
-    // Returns all attendance records ordered by most-recent time_in.
+    // Returns one record per unique id_number, ordered by most-recent
+    // time_in. When multiple rows exist for the same person (e.g. from
+    // a manual log + a scanner scan), only the single best record is
+    // returned so the Dashboard never shows duplicate display entries.
+    //
+    // "Best" record selection per id_number:
+    //   1. Prefer any row that already has a time_out (most complete).
+    //   2. Among equals, pick the row with the latest time_in.
+    //
     // Accepts an optional ?search= query parameter that filters across
     // id_number, last_name, first_name, and middle_initial columns.
     // ---------------------------------------------------------------
@@ -54,17 +62,44 @@ class AttendanceController extends Controller
             });
         }
 
-        // Return all matching rows wrapped in a "records" key so the
-        // frontend can access data.records consistently
-        return response()->json(['records' => $query->get()]);
+        // Fetch all matching rows, then deduplicate on the PHP side so
+        // the Dashboard always shows exactly one entry per person.
+        //
+        // For each id_number group we keep the single "best" record:
+        //   - A row with time_out beats one without (scan-out happened).
+        //   - Among rows of equal completeness we take the latest time_in.
+        $all = $query->get();
+
+        $deduplicated = $all
+            ->groupBy('id_number')
+            ->map(function ($group) {
+                // Sort within the group: rows with time_out first, then
+                // by latest time_in descending. The first item is the best.
+                return $group->sortBy([
+                    // 0 = has time_out (preferred), 1 = no time_out
+                    fn ($a) => $a->time_out ? 0 : 1,
+                    // Within same completeness, latest time_in wins (desc)
+                    fn ($a) => $a->time_in ? -strtotime($a->time_in) : 0,
+                ])->first();
+            })
+            ->values()
+            // Final sort: most recent time_in at the top of the table
+            ->sortByDesc('time_in')
+            ->values();
+
+        return response()->json(['records' => $deduplicated]);
     }
 
     // ---------------------------------------------------------------
     // POST /api/attendance
     //
-    // Manually adds a single attendance record.  Used from the Dashboard
-    // "New" button when the admin needs to enter a record by hand instead
-    // of via the RFID scanner.
+    // Upserts a single attendance record.  Used from the Dashboard
+    // "New" button when the admin needs to enter a record by hand.
+    //
+    // If a record already exists for the same id_number on the given
+    // date, that existing row is updated in place rather than creating
+    // a second row.  This prevents ghost records from reappearing on
+    // the Dashboard after the newer entry is deleted.
     //
     // Required fields: id_number, last_name, first_name
     // Optional fields: middle_initial, time_in, time_out, date, remarks
@@ -76,9 +111,9 @@ class AttendanceController extends Controller
         $lastName      = $request->input('last_name');
         $firstName     = $request->input('first_name');
         $middleInitial = $request->input('middle_initial');
-        $timeIn        = $request->input('time_in');   // HH:MM:SS string from <input type="time">
-        $timeOut       = $request->input('time_out');  // HH:MM:SS string, may be empty
-        $date          = $request->input('date');      // YYYY-MM-DD string from <input type="date">
+        $timeIn        = $request->input('time_in');   // HH:MM format from <input type="time">
+        $timeOut       = $request->input('time_out');  // HH:MM format, may be empty
+        $date          = $request->input('date');      // YYYY-MM-DD from <input type="date">
         $remarks       = $request->input('remarks');
 
         // Validate the three required fields before touching the database
@@ -92,32 +127,57 @@ class AttendanceController extends Controller
         $dateStr = $date ?: now()->toDateString();
 
         // Combine the date and time strings into full datetime strings
-        // that MySQL can store. Leave null if time wasn't provided.
+        // that MySQL can store. Leave null if the time field was empty.
         $timeInDate  = $timeIn  ? "{$dateStr} {$timeIn}"  : null;
         $timeOutDate = $timeOut ? "{$dateStr} {$timeOut}" : null;
 
-        // Insert the new attendance row
-        Attendance::create([
-            'id_number'      => $idNumber,
-            'last_name'      => $lastName,
-            'first_name'     => $firstName,
-            'middle_initial' => $middleInitial ?: null,
-            'time_in'        => $timeInDate,
-            'time_out'       => $timeOutDate,
-            'date'           => $dateStr,
-            'remarks'        => $remarks ?: null,
-        ]);
+        // ------------------------------------------------------------------
+        // Upsert: check whether a record already exists for this id_number
+        // on the target date.  If one does, update it in place; otherwise
+        // insert a fresh row.  Either way there is exactly one row per
+        // person per date, so deleting the manual entry can never reveal
+        // a hidden duplicate underneath.
+        // ------------------------------------------------------------------
+        $existing = Attendance::where('id_number', $idNumber)
+                               ->whereDate('date', $dateStr)
+                               ->orderBy('time_in')
+                               ->first();
+
+        if ($existing) {
+            // Overwrite the existing row with the admin-supplied values
+            $existing->update([
+                'last_name'      => $lastName,
+                'first_name'     => $firstName,
+                'middle_initial' => $middleInitial ?: null,
+                'time_in'        => $timeInDate,
+                'time_out'       => $timeOutDate,
+                'date'           => $dateStr,
+                'remarks'        => $remarks ?: null,
+            ]);
+
+            $logAction = 'UPDATE_ATTENDANCE';
+            $logDesc   = "Updated (via New) attendance record for {$firstName} {$lastName} ({$idNumber}) on {$dateStr}";
+        } else {
+            // No record for this person on this date — create one
+            Attendance::create([
+                'id_number'      => $idNumber,
+                'last_name'      => $lastName,
+                'first_name'     => $firstName,
+                'middle_initial' => $middleInitial ?: null,
+                'time_in'        => $timeInDate,
+                'time_out'       => $timeOutDate,
+                'date'           => $dateStr,
+                'remarks'        => $remarks ?: null,
+            ]);
+
+            $logAction = 'ADD_ATTENDANCE';
+            $logDesc   = "Added attendance record for {$firstName} {$lastName} ({$idNumber}) on {$dateStr}";
+        }
 
         // Record this action in the activity log for audit purposes
-        ActivityLogger::log(
-            $request,
-            'ADD_ATTENDANCE',
-            'attendance',
-            "Added attendance record for {$firstName} {$lastName} ({$idNumber}) on {$dateStr}",
-            $remarks ?: null
-        );
+        ActivityLogger::log($request, $logAction, 'attendance', $logDesc, $remarks ?: null);
 
-        return response()->json(['message' => 'Record added successfully.']);
+        return response()->json(['message' => 'Record saved successfully.']);
     }
 
     // ---------------------------------------------------------------

@@ -156,6 +156,45 @@ function formatDate(datetime) {
 // ---- Render Table ----
 let allRecords = [];
 
+/**
+ * Deduplicate an array of attendance records by id_number.
+ * When the same person appears more than once (e.g. a manual entry
+ * alongside a scanner entry), keep only the single best record:
+ *   1. Prefer a row that already has a time_out (most complete).
+ *   2. Among equals, keep the one with the latest time_in.
+ *
+ * This mirrors the deduplication done in AttendanceController::index()
+ * and acts as a safety net in case older cached data slips through.
+ */
+function deduplicateByIdNumber(records) {
+  const map = new Map();
+  records.forEach((rec) => {
+    const key = rec.id_number;
+    if (!map.has(key)) {
+      map.set(key, rec);
+      return;
+    }
+    const existing = map.get(key);
+    const existingHasOut = !!existing.time_out;
+    const recHasOut      = !!rec.time_out;
+
+    // A record with time_out is always preferred over one without
+    if (recHasOut && !existingHasOut) {
+      map.set(key, rec);
+      return;
+    }
+    if (!recHasOut && existingHasOut) return; // keep existing
+
+    // Both have (or both lack) time_out — keep the latest time_in
+    if (rec.time_in && existing.time_in) {
+      if (new Date(rec.time_in) > new Date(existing.time_in)) {
+        map.set(key, rec);
+      }
+    }
+  });
+  return Array.from(map.values());
+}
+
 function renderTable(records) {
   attendanceBody.innerHTML = '';
   if (!records || records.length === 0) {
@@ -163,10 +202,14 @@ function renderTable(records) {
     totalPresent.textContent = '0';
     return;
   }
-  emptyState.style.display = 'none';
-  totalPresent.textContent = records.length.toString().padStart(1, '0');
 
-  records.forEach((rec) => {
+  // Deduplicate on the client side as a safety net
+  const uniqueRecords = deduplicateByIdNumber(records);
+
+  emptyState.style.display = 'none';
+  totalPresent.textContent = uniqueRecords.length.toString().padStart(1, '0');
+
+  uniqueRecords.forEach((rec) => {
     const timeIn  = formatTime(rec.time_in);
     const timeOut = formatTime(rec.time_out);
     const dateStr = formatDate(rec.time_in || rec.date);
@@ -324,6 +367,14 @@ async function loadAttendance(query = '') {
   }
 }
 loadAttendance();
+
+// ---- Auto-poll: silently refresh the table every 5 seconds ----
+// This ensures that when a user scans Time In or Time Out on the kiosk,
+// the Dashboard updates the existing entry (or adds a new one) without
+// requiring a manual Refresh click.
+setInterval(() => {
+  loadAttendance(searchInput.value.trim());
+}, 5000);
 
 // ---- Search ----
 let searchTimer;
