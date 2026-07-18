@@ -276,8 +276,37 @@ class AttendanceController extends Controller
             return response()->json(['error' => 'No IDs provided.'], 400);
         }
 
-        // Delete all rows whose primary key is in the provided array
-        Attendance::whereIn('id', $ids)->delete();
+        // Fetch the target rows so we can determine which (id_number, date)
+        // pairs they belong to.  Multiple raw rows can exist for the same
+        // student on the same day when the QR scanner creates a fresh row
+        // each time after a previous deletion.  Deleting only by primary key
+        // would leave those sibling rows in place and cause them to re-surface
+        // on the Dashboard the next time the attendance list is refreshed.
+        $targets = Attendance::whereIn('id', $ids)->get(['id_number', 'date']);
+
+        // Build a set of (id_number, date) pairs from the targeted rows
+        $pairs = $targets->map(fn ($r) => [
+            'id_number' => $r->id_number,
+            'date'      => $r->date ? substr($r->date, 0, 10) : null,
+        ])->filter(fn ($p) => $p['id_number'] && $p['date'])->unique(fn ($p) => $p['id_number'] . '|' . $p['date'])->values();
+
+        // Delete every row that matches any of those (id_number, date) pairs.
+        // This wipes out all sibling rows accumulated by repeated scanner
+        // scans on the same day, so no ghost records can resurface.
+        if ($pairs->isNotEmpty()) {
+            $query = Attendance::query();
+            foreach ($pairs as $i => $pair) {
+                $method = $i === 0 ? 'where' : 'orWhere';
+                $query->$method(function ($q) use ($pair) {
+                    $q->where('id_number', $pair['id_number'])
+                      ->whereDate('date', $pair['date']);
+                });
+            }
+            $query->delete();
+        } else {
+            // Fallback: plain primary-key delete if no pairs could be resolved
+            Attendance::whereIn('id', $ids)->delete();
+        }
 
         // Log which IDs were deleted so the action can be audited
         ActivityLogger::log(

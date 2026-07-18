@@ -223,25 +223,33 @@ async function doScan(idNumber) {
 //  SUCCESS PANEL
 // ================================================================
 
-// Per-ID scan counter — used only for alternating the displayed label.
-// Odd (1, 3, 5…) → TIME IN   Even (2, 4, 6…) → TIME OUT
+// Per-ID scan counter — drives the displayed Time In / Time Out label.
+// Odd counts → TIME IN, even counts → TIME OUT.
+//
+// On the very first scan for a given ID within this page session the
+// counter is seeded from the server's action field so the display
+// starts in sync with the actual database state:
+//   • action = 'time_in'  → seed at 1 (odd  → shows TIME IN)
+//   • action = 'time_out' → seed at 2 (even → shows TIME OUT)
+//
+// Every scan after that simply increments, so the label alternates
+// correctly for the rest of the session regardless of what the server
+// returns.  This handles both the fresh-page-load case (student already
+// has a Time In from earlier today) and the repeated-scan case.
 const scanCountMap = {};
 
 function showSuccessPanel(data) {
   const id = data.id_number || '';
 
-  // Prefer the action field returned by the server (both RFID and QR
-  // return 'time_in' or 'time_out').  Fall back to the odd/even counter
-  // only when action is absent (legacy responses).
-  let displayIn;
-  if (data.action === 'time_in') {
-    displayIn = true;
-  } else if (data.action === 'time_out') {
-    displayIn = false;
+  if (scanCountMap[id] === undefined) {
+    // First time we see this ID this session — seed the counter so the
+    // displayed label matches the server's reported action exactly.
+    scanCountMap[id] = data.action === 'time_out' ? 2 : 1;
   } else {
-    scanCountMap[id] = (scanCountMap[id] || 0) + 1;
-    displayIn = (scanCountMap[id] % 2 === 1);
+    // Subsequent scans — just alternate from wherever we are.
+    scanCountMap[id] += 1;
   }
+  const displayIn = (scanCountMap[id] % 2 === 1);   // odd → IN, even → OUT
 
   resultBadge.className      = `result-badge result-badge--${displayIn ? 'in' : 'out'}`;
   badgeIconIn.style.display  = displayIn ? 'block' : 'none';
